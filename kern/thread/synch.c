@@ -345,3 +345,161 @@ cv_broadcast(struct cv *cv, struct lock *lock)
 
 	spinlock_release(&cv->cv_lock);
 }
+
+////////////////////////////////////////////////////////////
+//
+// RW Lock
+
+struct rwlock * 
+rwlock_create(const char *name) 
+{
+	struct rwlock *rwl;
+
+	KASSERT(name != NULL);
+
+	rwl = kmalloc(sizeof(*rwl));
+	if (rwl == NULL) {
+		return NULL;
+	}
+
+	rwl->rwl_name = kstrdup(name);
+	if (rwl->rwl_name == NULL) {
+		kfree(rwl);
+		return NULL;
+	}
+	
+	rwl->reader_wchan = wchan_create(rwl->rwl_name);
+	if (rwl->reader_wchan == NULL) {
+		kfree(rwl->rwl_name);
+		kfree(rwl);
+		return NULL;
+	}
+
+	rwl->writer_wchan = wchan_create(rwl->rwl_name);
+	if (rwl->writer_wchan == NULL) {
+		kfree(rwl->rwl_name);
+		kfree(rwl->reader_wchan);
+		kfree(rwl);
+		return NULL;
+	}
+
+	spinlock_init(&rwl->rwl_lock);
+
+	rwl->writer_count = 0;
+	rwl->reader_count = 0;
+	rwl->waiting_writers = 0;
+	rwl->waiting_readers = 0;
+	
+	return rwl;
+}
+
+void 
+rwlock_destroy(struct rwlock *rwl)
+{
+	KASSERT(rwl != NULL);
+	// Make sure the lock is not in use.
+	KASSERT(rwl->waiting_writers == 0);
+	KASSERT(rwl->waiting_readers == 0);
+	KASSERT(rwl->writer_count == 0);
+	KASSERT(rwl->reader_count == 0);
+
+	wchan_destroy(rwl->reader_wchan);
+	wchan_destroy(rwl->writer_wchan);
+	spinlock_cleanup(&rwl->rwl_lock);
+
+	kfree(rwl->rwl_name);
+	kfree(rwl);
+}
+
+/*
+ * Operations:
+ *    rwlock_acquire_read  - Get the lock for reading. Multiple threads can
+ *                          hold the lock for reading at the same time.
+ *    rwlock_release_read  - Free the lock. 
+ *    rwlock_acquire_write - Get the lock for writing. Only one thread can
+ *                           hold the write lock at one time.
+ *    rwlock_release_write - Free the write lock.
+ *
+ * These operations must be atomic. You get to write them.
+ */
+
+void 
+rwlock_acquire_read(struct rwlock *rwl) 
+{
+	KASSERT(rwl != NULL);
+	KASSERT(curthread != NULL);
+	KASSERT(!curthread->t_in_interrupt);
+
+	spinlock_acquire(&rwl->rwl_lock);
+	
+	if (rwl->writer_count == 1 || rwl->waiting_writers > 0) {
+		++rwl->waiting_readers;
+		wchan_sleep(rwl->reader_wchan, &rwl->rwl_lock);
+		--rwl->waiting_readers;
+	}
+
+	KASSERT(rwl->writer_count == 0);
+
+	++rwl->reader_count;
+
+	spinlock_release(&rwl->rwl_lock);
+}
+
+void 
+rwlock_release_read(struct rwlock *rwl)
+{
+	KASSERT(rwl != NULL);
+
+	spinlock_acquire(&rwl->rwl_lock);
+
+	--rwl->reader_count;
+
+	if (rwl->waiting_writers > 0 && rwl->reader_count == 0) {
+		wchan_wakeone(rwl->writer_wchan, &rwl->rwl_lock);
+	}
+
+	spinlock_release(&rwl->rwl_lock);
+}
+
+void 
+rwlock_acquire_write(struct rwlock *rwl)
+{
+	KASSERT(rwl != NULL);
+	KASSERT(curthread != NULL);
+	KASSERT(!curthread->t_in_interrupt);
+
+	spinlock_acquire(&rwl->rwl_lock);
+
+	if (rwl->reader_count > 0 || rwl->writer_count == 1 || rwl->waiting_readers > 0) {
+		++rwl->waiting_writers;
+		wchan_sleep(rwl->writer_wchan, &rwl->rwl_lock);
+		--rwl->waiting_writers;
+	}
+
+	KASSERT(rwl->reader_count == 0);
+	KASSERT(rwl->writer_count == 0);
+
+	rwl->writer_count = 1;
+
+	spinlock_release(&rwl->rwl_lock);
+}
+
+void 
+rwlock_release_write(struct rwlock *rwl)
+{
+	KASSERT(rwl != NULL);
+
+	spinlock_acquire(&rwl->rwl_lock);
+
+	rwl->writer_count = 0;
+
+	if (rwl->waiting_readers > 0) {
+		wchan_wakeall(rwl->reader_wchan, &rwl->rwl_lock);
+	}
+
+	else {
+		wchan_wakeone(rwl->writer_wchan, &rwl->rwl_lock);
+	}
+
+	spinlock_release(&rwl->rwl_lock);
+}

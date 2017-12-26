@@ -150,13 +150,19 @@ void cv_broadcast(struct cv *cv, struct lock *lock);
  */
 
 struct rwlock {
-        char *rwlock_name;
-        // add what you need here
-        // (don't forget to mark things volatile as needed)
+        char *rwl_name;
+        struct wchan *reader_wchan;
+        struct wchan *writer_wchan;
+        struct spinlock rwl_lock;
+        volatile unsigned int waiting_writers;
+        volatile unsigned int waiting_readers;
+        volatile unsigned int writer_count;
+        volatile unsigned int reader_count;
+        volatile bool reader_turn;
 };
 
-struct rwlock * rwlock_create(const char *);
-void rwlock_destroy(struct rwlock *);
+struct rwlock * rwlock_create(const char *rwl);
+void rwlock_destroy(struct rwlock *rwl);
 
 /*
  * Operations:
@@ -170,9 +176,9 @@ void rwlock_destroy(struct rwlock *);
  * These operations must be atomic. You get to write them.
  */
 
-void rwlock_acquire_read(struct rwlock *);
-void rwlock_release_read(struct rwlock *);
-void rwlock_acquire_write(struct rwlock *);
-void rwlock_release_write(struct rwlock *);
+void rwlock_acquire_read(struct rwlock *rwl);
+void rwlock_release_read(struct rwlock *rwl);
+void rwlock_acquire_write(struct rwlock *rwl);
+void rwlock_release_write(struct rwlock *rwl);
 
 #endif /* _SYNCH_H_ */
