@@ -105,7 +105,6 @@ SRCS+=$(KTOP)/test/fstest.c
 SRCS+=$(KTOP)/test/hmacunit.c
 SRCS+=$(KTOP)/test/kmalloctest.c
 SRCS+=$(KTOP)/test/lib.c
-SRCS+=$(KTOP)/test/rwtest.c
 SRCS+=$(KTOP)/test/semunit.c
 SRCS+=$(KTOP)/test/synchprobs.c
 SRCS+=$(KTOP)/test/synchtest.c

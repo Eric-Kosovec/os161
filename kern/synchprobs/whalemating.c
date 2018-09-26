@@ -40,12 +40,16 @@
 #include <test.h>
 #include <synch.h>
 
+
+
 /*
  * Called by the driver during initialization.
  */
 
-void whalemating_init() {
-	return;
+void 
+whalemating_init(void) 
+{
+	
 }
 
 /*
@@ -53,39 +57,37 @@ void whalemating_init() {
  */
 
 void
-whalemating_cleanup() {
-	return;
+whalemating_cleanup(void) 
+{
+	
 }
 
 void
 male(uint32_t index)
 {
-	(void)index;
 	/*
 	 * Implement this function by calling male_start and male_end when
 	 * appropriate.
 	 */
-	return;
+	(void)index;
 }
 
 void
 female(uint32_t index)
 {
-	(void)index;
 	/*
 	 * Implement this function by calling female_start and female_end when
 	 * appropriate.
 	 */
-	return;
+	(void)index;
 }
 
 void
 matchmaker(uint32_t index)
 {
-	(void)index;
 	/*
 	 * Implement this function by calling matchmaker_start and matchmaker_end
 	 * when appropriate.
 	 */
-	return;
+	(void)index;	
 }

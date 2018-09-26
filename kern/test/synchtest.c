@@ -48,11 +48,15 @@
 #define NLOCKLOOPS    120
 #define NCVLOOPS      5
 #define NTHREADS      32
+#define NREADER_LOOPS 60
+#define NWRITER_LOOPS 60
+#define NRWTHREADS 10
 #define SYNCHTEST_YIELDER_MAX 16
 
 static volatile unsigned long testval1;
 static volatile unsigned long testval2;
 static volatile unsigned long testval3;
+static unsigned long rwtestval;
 static volatile int32_t testval4;
 
 static struct semaphore *testsem = NULL;
@@ -60,6 +64,7 @@ static struct semaphore *testsem2 = NULL;
 static struct lock *testlock = NULL;
 static struct lock *testlock2 = NULL;
 static struct cv *testcv = NULL;
+static struct rwlock * testrwl = NULL;
 static struct semaphore *donesem = NULL;
 
 struct spinlock status_lock;
@@ -886,6 +891,207 @@ cvtest5(int nargs, char **args) {
 	testlock = NULL;
 	testsem2 = NULL;
 	testsem = NULL;
+
+	return 0;
+}
+
+static
+void
+rwlock_read_thread(void *junk, unsigned long num)
+{
+	int i;
+
+	(void)junk;
+
+	random_yielder(4);
+
+	for (i = 0; i < NREADER_LOOPS; ++i) {
+		random_yielder(4);
+		rwlock_acquire_read(testrwl);
+		kprintf("ReadThread %lu: [%lu]\n", num, rwtestval);
+		random_yielder(4);
+		rwlock_release_read(testrwl);
+	}
+
+	V(donesem);
+}
+
+static
+void
+rwlock_write_thread(void *junk, unsigned long num) 
+{
+	int i;
+
+	(void)junk;
+
+	random_yielder(4);
+
+	for (i = 0; i < NWRITER_LOOPS; ++i) {
+		random_yielder(4);
+		rwlock_acquire_write(testrwl);
+		++rwtestval;
+		kprintf("WriteThread %lu: [%lu]\n", num, rwtestval);
+		random_yielder(4);
+		rwlock_release_write(testrwl);
+	}
+
+	V(donesem);
+}
+
+static 
+void 
+init_items() 
+{
+	if (donesem == NULL) {
+		donesem = sem_create("donesem", 0);
+		if (donesem == NULL) {
+			panic("rwtest: sem_create failed\n");
+		}
+	}
+
+	if (testrwl == NULL) {
+		testrwl = rwlock_create("rwlocktest lock");
+		if (testrwl == NULL) {
+			panic("rwtest: rwlock_create failed\n");
+		}
+	}
+}
+
+int rwtest(int nargs, char **args) {
+	(void)nargs;
+	(void)args;
+
+	int i;
+	int result;
+
+	init_items();
+
+	rwtestval = 0;
+
+	kprintf("Starting rwt1...\n");
+
+	for (i = 0; i < NRWTHREADS >> 1; ++i) {
+		result = thread_fork("rwlock_reader", NULL, rwlock_read_thread, NULL, i);
+
+		if (result) {
+			panic("rwlock_reader: thread_fork failed: %s\n", strerror(result));
+		}
+	}
+
+	for (i = 0; i < NRWTHREADS >> 1; ++i) {
+		result = thread_fork("rwlock_writer", NULL, rwlock_write_thread, NULL, i);
+
+		if (result) {
+			panic("rwlock_writer: thread_fork failed: %s\n", strerror(result));
+		}
+	}
+
+	for (i = 0; i < NRWTHREADS; ++i) {
+		P(donesem);
+	}
+
+	kprintf_t("\n");
+	success(TEST161_SUCCESS, SECRET, "rwt1");
+
+	return 0;
+}
+
+int rwtest2(int nargs, char **args) {
+	(void)nargs;
+	(void)args;
+
+	int i;
+	int result;
+
+	init_items();
+
+	rwtestval = 0;
+
+	kprintf("Starting rwt2...\n");
+
+	for (i = 0; i < 1; ++i) {
+		result = thread_fork("rwlock_reader", NULL, rwlock_read_thread, NULL, i);
+
+		if (result) {
+			panic("rwlock_reader: thread_fork failed: %s\n", strerror(result));
+		}
+	}
+
+	for (i = 0; i < 1; ++i) {
+		result = thread_fork("rwlock_writer", NULL, rwlock_write_thread, NULL, i);
+
+		if (result) {
+			panic("rwlock_writer: thread_fork failed: %s\n", strerror(result));
+		}
+	}
+
+	for (i = 0; i < 2; ++i) {
+		P(donesem);
+	}
+
+	kprintf_t("\n");
+	success(TEST161_SUCCESS, SECRET, "rwt2");
+
+	return 0;
+}
+
+int rwtest3(int nargs, char **args) {
+	(void)nargs;
+	(void)args;
+
+	// Check for writer starvation in the case of many readers
+
+	int i;
+	int result;
+
+	init_items();
+
+	rwtestval = 0;
+
+	kprintf("Starting rwt3...\n");
+
+	for (i = 0; i < 20; ++i) {
+		result = thread_fork("rwlock_reader", NULL, rwlock_read_thread, NULL, i);
+
+		if (result) {
+			panic("rwlock_reader: thread_fork failed: %s\n", strerror(result));
+		}
+	}
+
+	for (i = 0; i < 1; ++i) {
+		result = thread_fork("rwlock_writer", NULL, rwlock_write_thread, NULL, i);
+
+		if (result) {
+			panic("rwlock_writer: thread_fork failed: %s\n", strerror(result));
+		}
+	}
+
+	for (i = 0; i < 21; ++i) {
+		P(donesem);
+	}
+
+	kprintf_t("\n");
+	success(TEST161_SUCCESS, SECRET, "rwt3");
+
+	return 0;
+}
+
+int rwtest4(int nargs, char **args) {
+	(void)nargs;
+	(void)args;
+
+	kprintf_n("rwt4 unimplemented\n");
+	success(TEST161_FAIL, SECRET, "rwt4");
+
+	return 0;
+}
+
+int rwtest5(int nargs, char **args) {
+	(void)nargs;
+	(void)args;
+
+	kprintf_n("rwt5 unimplemented\n");
+	success(TEST161_FAIL, SECRET, "rwt5");
 
 	return 0;
 }

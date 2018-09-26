@@ -154,11 +154,10 @@ struct rwlock {
         struct wchan *reader_wchan;
         struct wchan *writer_wchan;
         struct spinlock rwl_lock;
-        volatile unsigned int waiting_writers;
-        volatile unsigned int waiting_readers;
-        volatile unsigned int writer_count;
-        volatile unsigned int reader_count;
-        volatile bool reader_turn;
+        volatile unsigned int writers_waiting;
+        volatile unsigned int readers_waiting;
+        volatile unsigned int writers_active;
+        volatile unsigned int readers_active;
 };
 
 struct rwlock * rwlock_create(const char *rwl);

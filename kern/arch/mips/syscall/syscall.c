@@ -35,6 +35,7 @@
 #include <thread.h>
 #include <current.h>
 #include <syscall.h>
+#include <copyinout.h>
 
 
 /*
@@ -79,8 +80,14 @@ void
 syscall(struct trapframe *tf)
 {
 	int callno;
+	int err = 0;
 	int32_t retval;
-	int err;
+	int64_t retval64;
+	bool is_retval64 = false;
+
+	// For lseek
+	int64_t pos;
+	int whence;
 
 	KASSERT(curthread != NULL);
 	KASSERT(curthread->t_curspl == 0);
@@ -98,18 +105,63 @@ syscall(struct trapframe *tf)
 	 */
 
 	retval = 0;
+	retval64 = 0;
 
 	switch (callno) {
+		
+		/* Misc. syscalls */
+
 	    case SYS_reboot:
 		err = sys_reboot(tf->tf_a0);
 		break;
 
 	    case SYS___time:
-		err = sys___time((userptr_t)tf->tf_a0,
-				 (userptr_t)tf->tf_a1);
+		err = sys___time((userptr_t)tf->tf_a0, (userptr_t)tf->tf_a1);
 		break;
 
-	    /* Add stuff here */
+	    /* File syscalls */
+
+	    case SYS_open:
+	    err = sys_open((const_userptr_t)tf->tf_a0, tf->tf_a1, &retval);
+	    break;
+
+	    case SYS_write:
+	    err = sys_write(tf->tf_a0, (const_userptr_t)tf->tf_a1, (size_t)tf->tf_a2, &retval);
+	    break;
+
+	    case SYS_read:
+	    err = sys_read(tf->tf_a0, (userptr_t)tf->tf_a1, tf->tf_a2, &retval);
+	    break;
+
+	    case SYS_lseek:
+	    pos = tf->tf_a2;
+	    pos = (pos << 32) | tf->tf_a3;
+	    err = copyin((const_userptr_t)(tf->tf_sp + 16), &whence, sizeof(whence));
+	    if (err) {
+	    	retval = -1;
+	    	break;
+	    }
+	    err = sys_lseek(tf->tf_a0, (off_t)pos, whence, &retval64);
+	    is_retval64 = true;
+	    tf->tf_v1 = 0;
+	    break;
+
+	    case SYS_close:
+	    err = sys_close(tf->tf_a0, &retval);
+	    break;
+
+	    case SYS_dup2:
+	    err = 0;
+	    //err = sys_dup2(tf->tf_a0, tf->tf_a1, &retval);
+	    break;
+
+	    /* Process syscalls */
+
+	    case SYS__exit:
+	    err = 0;
+	    retval = tf->tf_a0;
+	    //sys__exit(tf->tf_a0);
+	    break;
 
 	    default:
 		kprintf("Unknown syscall %d\n", callno);
@@ -129,6 +181,11 @@ syscall(struct trapframe *tf)
 	}
 	else {
 		/* Success. */
+		if (is_retval64) {
+			retval = (int32_t)(retval64 >> 32);
+			tf->tf_v1 = (int32_t)retval64;
+		}
+
 		tf->tf_v0 = retval;
 		tf->tf_a3 = 0;      /* signal no error */
 	}

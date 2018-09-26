@@ -387,6 +387,12 @@ file      vfs/devnull.c
 file      syscall/loadelf.c
 file      syscall/runprogram.c
 file      syscall/time_syscalls.c
+file      syscall/open.c
+file      syscall/write.c
+file      syscall/read.c
+file      syscall/lseek.c
+file      syscall/close.c
+file      syscall/dup2.c
 
 #
 # Startup and initialization
@@ -445,7 +451,6 @@ file		test/threadlisttest.c
 file		test/threadtest.c
 file		test/tt3.c
 file		test/synchtest.c
-file		test/rwtest.c
 file		test/semunit.c
 file		test/hmacunit.c
 file		test/kmalloctest.c

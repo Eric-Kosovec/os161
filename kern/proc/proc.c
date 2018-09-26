@@ -48,11 +48,19 @@
 #include <current.h>
 #include <addrspace.h>
 #include <vnode.h>
-
+#include <vfs.h>
+#include <kern/fcntl.h>
+#include <kern/unistd.h>
+#include <kern/errno.h>
+#include <lib.h>
 /*
  * The process for the kernel; this holds all the kernel-only threads.
  */
-struct proc *kproc;
+struct proc *kproc = NULL;
+
+static int init_console_handles(struct file_handle ** files);
+static int create_console(struct file_handle ** files, int fd, int flags);
+static void destroy_file_handle(struct file_handle ** files, int fd);
 
 /*
  * Create a proc structure.
@@ -81,6 +89,32 @@ proc_create(const char *name)
 
 	/* VFS fields */
 	proc->p_cwd = NULL;
+
+	/*
+	 * If kproc is null, it means we are currently bootstrapping 
+	 * the kernel process, which occurs before bootstrapping vfs.
+	 * Therefore, calls to vfs will prevent the system from starting. 
+	 * In addition, the kernel does not need stdin, stdout, and stderr in the same 
+	 * manner as a user process.
+	 */
+	if (kproc == NULL) {
+		return proc;
+	}
+
+	proc->ft_lock = lock_create("file_table_lock");
+
+	if (proc->ft_lock == NULL) {
+		spinlock_cleanup(&proc->p_lock);
+		return NULL;
+	}
+
+	memset(proc->files, 0, sizeof(proc->files));
+
+	if (init_console_handles(proc->files)) {
+		spinlock_cleanup(&proc->p_lock);
+		lock_destroy(proc->ft_lock);
+		return NULL;
+	}
 
 	return proc;
 }
@@ -167,6 +201,16 @@ proc_destroy(struct proc *proc)
 
 	KASSERT(proc->p_numthreads == 0);
 	spinlock_cleanup(&proc->p_lock);
+
+	lock_destroy(proc->ft_lock);
+
+	int fd;
+	for (fd = 0; fd < OPEN_MAX; ++fd) {
+		if (proc->files[fd]) {
+			destroy_file_handle(proc->files, fd);
+			KASSERT(proc->files[fd] == NULL); // Make sure the handle is nulled-out
+		}
+	}
 
 	kfree(proc->p_name);
 	kfree(proc);
@@ -317,4 +361,102 @@ proc_setas(struct addrspace *newas)
 	proc->p_addrspace = newas;
 	spinlock_release(&proc->p_lock);
 	return oldas;
+}
+
+static int 
+init_console_handles(struct file_handle ** files) 
+{
+	KASSERT(files != NULL);
+
+	int result = create_console(files, STDIN_FILENO, O_RDONLY);
+
+	if (result) {
+		return result;
+	}
+
+	result = create_console(files, STDOUT_FILENO, O_WRONLY);
+
+	if (result) {
+		destroy_file_handle(files, STDIN_FILENO);
+		return result;
+	}
+
+	result = create_console(files, STDERR_FILENO, O_WRONLY);
+
+	if (result) {
+		destroy_file_handle(files, STDIN_FILENO);
+		destroy_file_handle(files, STDOUT_FILENO);
+		return result;
+	}
+
+	return 0;
+}
+
+static int 
+create_console(struct file_handle ** files, int fd, int flags)  
+{
+	KASSERT(files != NULL);
+
+	if (fd < 0 || fd >= OPEN_MAX || files[fd] != NULL) {
+		return EINVAL;
+	}
+
+	files[fd] = kmalloc(sizeof(struct file_handle));
+
+	if (files[fd] == NULL) {
+		return ENOMEM;
+	}
+
+	files[fd]->ref_count = 1;
+	files[fd]->offset = 0;
+	files[fd]->flags = flags;
+
+	if (fd == STDIN_FILENO) {
+		files[fd]->lk = lock_create("stdin_lock");
+	}
+	else if (fd == STDOUT_FILENO) {
+		files[fd]->lk = lock_create("stdout_lock");
+	}
+	else {
+		files[fd]->lk = lock_create("stderr_lock");
+	}
+
+	if (files[fd]->lk == NULL) {
+		kfree(files[fd]);
+		files[fd] = NULL;
+		return ENOMEM;
+	}
+
+	char * console_name = kstrdup("con:");
+
+	if (console_name == NULL) {
+		kfree(files[fd]);
+		files[fd] = NULL;
+		return ENOMEM;
+	}
+
+	int result = vfs_open(console_name, files[fd]->flags, 0664, &files[fd]->f_vnode);
+
+	if (result) {
+		kprintf("FAILED TO OPEN CONSOLE");
+		kfree(console_name);
+		destroy_file_handle(files, fd);
+		return result;
+	}
+
+	kfree(console_name);
+
+	return 0;
+}
+
+static void destroy_file_handle(struct file_handle ** files, int fd) 
+{
+	KASSERT(files != NULL);
+
+	if (files != NULL && fd >= 0 && fd < OPEN_MAX && files[fd] != NULL) {
+		vfs_close(files[fd]->f_vnode);
+		lock_destroy(files[fd]->lk);
+		kfree(files[fd]);
+		files[fd] = NULL;
+	}
 }
